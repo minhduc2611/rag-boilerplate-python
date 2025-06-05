@@ -1,0 +1,10 @@
+flask
+pypdf
+openai
+dotenv
+langchain_openai
+langchain
+langchain_experimental
+langchain_community
+flask-cors
+werkzeug
