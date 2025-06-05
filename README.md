@@ -10,12 +10,7 @@ pip install -r requirements.txt
 # Test Locally
 
 ```
-func start
-```
-
-# Create a new function
-```
-func new --template "HTTP trigger" --name <function-name>
+python main.py
 ```
 
 # Install dependencies
