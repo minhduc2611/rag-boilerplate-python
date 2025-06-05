@@ -1,9 +1,9 @@
 from libs.pdf_lib import process_pdf, read_pdf_from_buffer, allowed_file
-from flask import jsonify
 from werkzeug.datastructures import FileStorage
-from typing import List
+from typing import List, Tuple
+from libs.weaviate_lib import upload_documents
 
-def upload_file(files: List[FileStorage], description: str) -> List[dict]:
+def upload_file(files: List[FileStorage], description: str) -> Tuple[List[dict], int]:
     if not files:
         raise Exception("No files uploaded")
 
@@ -24,14 +24,18 @@ def upload_file(files: List[FileStorage], description: str) -> List[dict]:
         serialized_chunks = [
             {
                 "content": chunk.page_content,
-                "metadata": chunk.metadata
+                "title": file.filename
             }
             for chunk in chunks
         ]
-        
         results.append({
             "filename": file.filename,
             "num_chunks": len(chunks),
             "chunks": serialized_chunks
         })
-    return results
+        
+        failed_objects = upload_documents(serialized_chunks)
+        
+        return results, len(failed_objects)
+    
+    return results, 0
