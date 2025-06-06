@@ -15,6 +15,7 @@ def validate_ask(body: AskRequest) -> List[str]:
     return errors
 
 def handle_ask(body: AskRequest) -> Dict[str, Any]:
+    # 1. validate request
     errors = validate_ask(body)
     if errors:
         return Response(
@@ -22,7 +23,8 @@ def handle_ask(body: AskRequest) -> Dict[str, Any]:
             status_code=400,
             media_type="application/json"
         )
-    # Get the last user message as the query
+
+    # 2. get the last user message as the query
     user_messages = [msg for msg in body.messages if msg.role == "user"]
     last_user_message = user_messages[-1] if user_messages else None
 
@@ -49,7 +51,7 @@ def handle_ask(body: AskRequest) -> Dict[str, Any]:
 
     user_time = datetime.now()
 
-    # Insert messages to the database
+    # Insert messages to the database, ignore 
     insert_to_collection_in_batch(
         collection_name="Messages",
         properties=[{

@@ -24,6 +24,7 @@ def health_check():
     """Health check endpoint"""
     return jsonify({"status": "healthy"}), 200
 
+
 @app.route('/api/v1/upload-documents', methods=['POST'])
 def process_pdf_endpoint():
     """Endpoint to process a PDF file and return semantic chunks"""
@@ -31,11 +32,14 @@ def process_pdf_endpoint():
         return jsonify({"status": "ok"}), 200
 
     try:
+        # 1. prepare payload
         files = request.files.getlist('files')
         description = request.form.get('description')
-        
+
+        # 2. handle request
         results, failed_objects = upload_file(files, description)
 
+        # 3. return results
         return jsonify({
             "status": "success" if failed_objects == 0 else "failed",
             "description": description,
@@ -50,15 +54,17 @@ def process_pdf_endpoint():
 @app.route('/api/v1/chat/<session_id>/ask', methods=['POST'])
 def ask_endpoint(session_id):
     try:
+        # 1. prepare payload
         body = request.json
-        # Convert the JSON body into an AskRequest object
         messages = [Message(**msg) for msg in body.get('messages', [])]
         ask_request = AskRequest(
             messages=messages,
             session_id=session_id,
             options=body.get('options')
         )
+        # 2. handle request
         results = handle_ask(ask_request)
+        # 3. return results
         return jsonify(results), 200
     except Exception as e:
         logger.error(f"Error processing ask: {str(e)}")
@@ -67,7 +73,10 @@ def ask_endpoint(session_id):
 @app.route('/api/v1/chat/<session_id>', methods=['GET'])
 def chat_endpoint(session_id):
     try:
+        # 1. prepare payload
+        # 2. handle request
         results = handle_chat(session_id)
+        # 3. return results
         return jsonify(results), 200
     except Exception as e:
         logger.error(f"Error processing chat: {str(e)}")
@@ -78,3 +87,15 @@ if __name__ == '__main__':
         initialize_schema()
         app.run(debug=False, port=3001) 
     
+# @app.route('/api/v1/chat/<session_id>', methods=['POST'])
+# def chat_endpoint_post(session_id):
+#     try:
+#         # 1. prepare payload
+#         body = request.json
+#         # 2. handle request
+#         results = handle_chat(session_id)
+#         # 3. return results
+#         return jsonify(results), 200
+#     except Exception as e:
+#         logger.error(f"Error processing chat: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
