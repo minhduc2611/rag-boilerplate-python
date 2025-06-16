@@ -8,3 +8,6 @@ langchain_experimental
 langchain_community
 flask-cors
 werkzeug
+PyJWT
+weaviate-client
+youtube-transcript-api

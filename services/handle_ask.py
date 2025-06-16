@@ -1,10 +1,16 @@
-from typing import List, Dict, Any
-from flask import Response
+from typing import List, Dict, Any, Generator
 import json
-from libs.weaviate_lib import search_documents, insert_to_collection_in_batch
-from data_classes.common_classes import AskRequest
+from libs.weaviate_lib import search_documents, insert_to_collection_in_batch, search_non_vector_collection
+from data_classes.common_classes import AskRequest, Message
 from agents.buddha_agent import generate_answer
 from datetime import datetime, timedelta
+from flask import Response, stream_with_context
+
+class AskError(Exception):
+    def __init__(self, message: str, status_code: int = 400):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
 
 def validate_ask(body: AskRequest) -> List[str]:
     errors: List[str] = []
@@ -14,44 +20,35 @@ def validate_ask(body: AskRequest) -> List[str]:
         errors.append("session_id is required")
     return errors
 
-def handle_ask(body: AskRequest) -> Dict[str, Any]:
-    # 1. validate request
+def prepare_ask(body: AskRequest) -> tuple[Message, List[Dict[str, str]]]:
     errors = validate_ask(body)
     if errors:
-        return Response(
-            content=json.dumps({"error": errors}),
-            status_code=400,
-            media_type="application/json"
-        )
-
-    # 2. get the last user message as the query
+        raise AskError(", ".join(errors), 400)
     user_messages = [msg for msg in body.messages if msg.role == "user"]
     last_user_message = user_messages[-1] if user_messages else None
 
     if not last_user_message:
-        return Response(
-            content=json.dumps({"error": "No user message found"}),
-            status_code=400,
-            media_type="application/json"
-        )
+        raise AskError("No user message found", 400)
 
     # Search for relevant documents
     relevant_docs = search_documents(last_user_message.content)
-
+    print("relevant_docs")
+    print(relevant_docs)
+    print("--------------------------------")
+    
     contexts = [
         {
             "title": doc["title"],
-            "content": doc["content"]
+            "content": doc["content"],
+            "description": doc["description"]
         }
         for doc in relevant_docs
     ]
-    # Generate answer using OpenAI
-    answer = generate_answer(body.messages, contexts, body.options)
-    sources_set = set(doc["title"] for doc in contexts)
+    return last_user_message, contexts
 
+def handle_insert_messages(body: AskRequest, last_user_message: Message, answer: str):
     user_time = datetime.now()
-
-    # Insert messages to the database, ignore 
+    # Insert messages to the database
     insert_to_collection_in_batch(
         collection_name="Messages",
         properties=[{
@@ -65,11 +62,73 @@ def handle_ask(body: AskRequest) -> Dict[str, Any]:
             "content": answer,
             "role": "assistant",
             "created_at": (user_time + timedelta(milliseconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        }
-        ]
+        }]
     )
-    return {
-        "answer": answer,
-        "sources": list(sources_set),
-        "contexts": contexts
-    }
+    
+def handle_ask_non_streaming(body: AskRequest) -> str:
+    try:
+        # 1. prepare
+        last_user_message, contexts = prepare_ask(body)
+        # 2. generate answer
+        answer = generate_answer(body.messages, contexts, body.options, body.language, body.model)
+        # 3. save messages
+        handle_insert_messages(body, last_user_message, answer)
+        return answer
+    except AskError:
+        raise
+    except Exception as e:
+        raise AskError(str(e), 500)
+
+def handle_ask_streaming(body: AskRequest) -> Response:
+    try:
+        # 1. prepare
+        last_user_message, contexts = prepare_ask(body)
+        # 2. generate answer
+        def generate():
+            try:
+                stream = generate_answer(body.messages, contexts, body.options, body.language, body.model)
+                full_response = ""
+                
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        yield content
+                
+                # After streaming is complete, save the messages
+                user_time = datetime.now()
+                insert_to_collection_in_batch(
+                    collection_name="Messages",
+                    properties=[{
+                        "session_id": body.session_id,
+                        "content": last_user_message.content,
+                        "role": last_user_message.role,
+                        "created_at": user_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    },
+                    {
+                        "session_id": body.session_id,
+                        "content": full_response,
+                        "role": "assistant",
+                        "created_at": (user_time + timedelta(milliseconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    }]
+                )
+                yield ""
+            except Exception as e:
+                raise AskError(str(e), 500)
+
+        return Response(
+            stream_with_context(generate()),
+            content_type='text/event-stream'
+        )
+    except AskError as e:
+        return Response(
+            response=json.dumps({"error": e.message}),
+            status=e.status_code,
+            mimetype="application/json"
+        )
+    except Exception as e:
+        return Response(
+            response=json.dumps({"error": str(e)}),
+            status=500,
+            mimetype="application/json"
+        )

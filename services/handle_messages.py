@@ -31,7 +31,7 @@ def get_messages(session_id: str, limit: int = 10) -> List[Message]:
         filters=filters,
         limit=limit,
         properties=["content", "role", "created_at"],
-        sort=Sort.by_property("created_at", ascending=False)
+        sort=Sort.by_property("created_at", ascending=True).by_property("role", ascending=False)
     )
     # Get relevant messages from the database
     # relevant_messages = get_relevant_messages(messages, limit)
