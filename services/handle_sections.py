@@ -8,7 +8,8 @@ from libs.weaviate_lib import (
     search_non_vector_collection,
     search_vector_collection,
     update_collection_object,
-    delete_collection_object
+    delete_collection_object,
+    get_collection_count
 )
 from weaviate.collections.classes.filters import Filter
 from weaviate.collections.classes.grpc import Sort
@@ -43,17 +44,27 @@ def create_section(section: Section) -> Section:
     uuid =  insert_to_collection(COLLECTION_SECTIONS, properties, section.uuid)
     return get_section_by_id(uuid)
 
-def get_sections(email: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
-    """Get all sections with pagination"""
+def get_sections(email: str, limit: int = 10, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
+    """Get all sections with pagination and total count"""
     filters = Filter.by_property("author").equal(email)
-    return search_non_vector_collection(
+    
+    # Get sections data
+    sections = search_non_vector_collection(
         collection_name=COLLECTION_SECTIONS,
         limit=limit,
         offset=offset,
         properties=["title", "order", "created_at", "updated_at"],
-        sort=Sort.by_property("order", ascending=True),
+        sort=Sort.by_property("created_at", ascending=False),
         filters=filters
     )
+    
+    # Get total count
+    total_count = get_collection_count(
+        collection_name=COLLECTION_SECTIONS,
+        filters=filters
+    )
+    
+    return sections, total_count
 
 def get_section_by_id(section_id: str) -> Section:
     """Get a section by its ID"""

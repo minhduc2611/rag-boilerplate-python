@@ -6,8 +6,7 @@ import logging
 from libs.weaviate_lib import initialize_schema, close_client
 from contextlib import contextmanager
 from services.handle_ask import  handle_ask_streaming, handle_ask_non_streaming, AskError
-from services.handle_auth import sign_in, sign_up, verify_jwt_token, AuthError
-from services.handle_youtube import get_video_metadata, YouTubeError
+from services.handle_auth import sign_in, sign_up, verify_jwt_token, AuthError, blacklist_token
 from data_classes.common_classes import AskRequest, Message, Section, AuthRequest, Language, Document, File
 from services.handle_messages import handle_chat
 from services.handle_sections import (
@@ -19,10 +18,21 @@ from services.handle_sections import (
     search_sections
 )
 from services.upload_file import get_documents, create_document, update_document, delete_document, get_document_by_id, get_files, get_file_by_id, create_file, update_file, delete_file          
+from agents.meta_agent import (
+    generate_meta_agent_response,
+    create_agent,
+    list_agents,
+    get_agent,
+    update_agent,
+    delete_agent,
+    search_agents,
+    generate_agent_code,
+    test_agent
+)
 import json
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app, expose_headers=["X-Total-Count", "X-Page-Size", "X-Page-Number", "X-Total-Pages"])
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -187,8 +197,18 @@ def get_sections_endpoint():
         print(email)
         limit = int(request.args.get('limit', 10))
         offset = int(request.args.get('offset', 0))
-        sections = get_sections(email, limit, offset)
-        return jsonify(sections), 200
+        sections, total_count = get_sections(email, limit, offset)
+        
+        # Calculate pagination info
+        page_number = (offset // limit) + 1 if limit > 0 else 1
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+        
+        response = jsonify(sections)
+        response.headers['X-Total-Count'] = str(total_count)
+        response.headers['X-Page-Size'] = str(limit)
+        response.headers['X-Page-Number'] = str(page_number)
+        response.headers['X-Total-Pages'] = str(total_pages)
+        return response, 200
     except Exception as e:
         logger.error(f"Error getting sections: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -247,19 +267,6 @@ def search_sections_endpoint():
         logger.error(f"Error searching sections: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/v1/youtube/metadata/<video_id>', methods=['GET'])
-@login_required
-def youtube_metadata_endpoint(video_id):
-    """Get metadata for a YouTube video"""
-    try:
-        metadata = get_video_metadata(video_id)
-        return jsonify(metadata), 200
-    except YouTubeError as e:
-        return jsonify({"error": e.message}), e.status_code
-    except Exception as e:
-        logger.error(f"Error fetching YouTube metadata: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
 # manage documents 
 
 @app.route('/api/v1/documents', methods=['GET'])
@@ -270,8 +277,18 @@ def get_documents_endpoint():
         limit = int(request.args.get('limit', 10))
         offset = int(request.args.get('offset', 0))
         
-        documents = get_documents(limit, offset)
-        return jsonify(documents), 200
+        documents, total_count = get_documents(limit, offset)
+        
+        # Calculate pagination info
+        page_number = (offset // limit) + 1 if limit > 0 else 1
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+        
+        response = jsonify(documents)
+        response.headers['X-Total-Count'] = str(total_count)
+        response.headers['X-Page-Size'] = str(limit)
+        response.headers['X-Page-Number'] = str(page_number)
+        response.headers['X-Total-Pages'] = str(total_pages)
+        return response, 200
     except Exception as e:
         logger.error(f"Error getting documents: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -336,8 +353,18 @@ def get_files_endpoint():
     try:
         limit = int(request.args.get('limit', 10))
         offset = int(request.args.get('offset', 0))
-        files = get_files(limit, offset)
-        return jsonify(files), 200
+        files, total_count = get_files(limit, offset)
+        
+        # Calculate pagination info
+        page_number = (offset // limit) + 1 if limit > 0 else 1
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+        
+        response = jsonify(files)
+        response.headers['X-Total-Count'] = str(total_count)
+        response.headers['X-Page-Size'] = str(limit)
+        response.headers['X-Page-Number'] = str(page_number)
+        response.headers['X-Total-Pages'] = str(total_pages)
+        return response, 200
     except Exception as e:
         logger.error(f"Error getting files: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -381,11 +408,166 @@ def delete_file_endpoint(file_id):
         return jsonify({"error": str(e)}), 500
     
 
+# Meta Agent endpoints ================================
+@app.route('/api/v1/meta-agent/chat', methods=['POST'])
+@login_required
+def meta_agent_chat_endpoint():
+    """Chat with the meta agent"""
+    try:
+        body = request.json
+        messages = [Message(**msg) for msg in body.get('messages', [])]
+        language = body.get('language', Language.EN)
+        options = body.get('options', {})
+        
+        response = generate_meta_agent_response(
+            messages=messages,
+            language=language,
+            options=options
+        )
+        
+        return jsonify({"response": response}), 200
+    except Exception as e:
+        logger.error(f"Error in meta agent chat: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/api/v1/agents', methods=['POST'])
+@login_required
+def create_agent_endpoint():
+    """Create a new agent"""
+    try:
+        body = request.json
+        name = body.get('name')
+        description = body.get('description')
+        system_prompt = body.get('system_prompt')
+        tools = body.get('tools', [])
+        model = body.get('model', 'gpt-4o-mini')
+        temperature = body.get('temperature', 0)
+        
+        result = create_agent(
+            name=name,
+            description=description,
+            system_prompt=system_prompt,
+            tools=tools,
+            model=model,
+            temperature=temperature,
+            author=g.user_id
+        )
+        
+        return jsonify(result), 201
+    except Exception as e:
+        logger.error(f"Error creating agent: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/api/v1/agents', methods=['GET'])
+@login_required
+def list_agents_endpoint():
+    """List all agents for the current user"""
+    try:
+        limit = int(request.args.get('limit', 10))
+        agents = list_agents(author=g.user_id, limit=limit)
+        return jsonify(agents), 200
+    except Exception as e:
+        logger.error(f"Error listing agents: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/api/v1/agents/<agent_id>', methods=['GET'])
+@login_required
+def get_agent_endpoint(agent_id):
+    """Get a specific agent"""
+    try:
+        agent = get_agent(agent_id)
+        if "error" in agent:
+            return jsonify(agent), 404
+        return jsonify(agent), 200
+    except Exception as e:
+        logger.error(f"Error getting agent: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/api/v1/agents/<agent_id>', methods=['PUT'])
+@login_required
+def update_agent_endpoint(agent_id):
+    """Update an agent"""
+    try:
+        body = request.json
+        result = update_agent(agent_id, **body)
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"Error updating agent: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/api/v1/agents/<agent_id>', methods=['DELETE'])
+@login_required
+def delete_agent_endpoint(agent_id):
+    """Delete an agent"""
+    try:
+        result = delete_agent(agent_id)
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"Error deleting agent: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/agents/search', methods=['GET'])
+@login_required
+def search_agents_endpoint():
+    """Search for agents"""
+    try:
+        query = request.args.get('query', '')
+        limit = int(request.args.get('limit', 5))
+        agents = search_agents(query=query, limit=limit)
+        return jsonify(agents), 200
+    except Exception as e:
+        logger.error(f"Error searching agents: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/agents/<agent_id>/code', methods=['GET'])
+@login_required
+def generate_agent_code_endpoint(agent_id):
+    """Generate Python code for an agent"""
+    try:
+        agent_config = get_agent(agent_id)
+        if "error" in agent_config:
+            return jsonify(agent_config), 404
+        
+        code = generate_agent_code(agent_config)
+        return jsonify({"code": code}), 200
+    except Exception as e:
+        logger.error(f"Error generating agent code: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/agents/<agent_id>/test', methods=['POST'])
+@login_required
+def test_agent_endpoint(agent_id):
+    """Test an agent with sample input"""
+    try:
+        body = request.json
+        test_input = body.get('test_input', 'Hello, how can you help me?')
+        
+        result = test_agent(agent_id=agent_id, test_input=test_input)
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"Error testing agent: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+# ================================
+@app.route('/api/v1/logout', methods=['POST'])
+@login_required
+def logout_endpoint():
+    """Logout"""
+    try:
+        # Get the token from the Authorization header
+        auth_header = request.headers.get('Authorization')
+        token = auth_header.split(" ")[1]
+        
+        # Blacklist the token
+        success = blacklist_token(token, g.user_id)
+        
+        if not success:
+            return jsonify({"error": "Failed to logout"}), 500
+            
+        return jsonify({"status": "success", "message": "Successfully logged out"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error logging out: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     with weaviate_connection():

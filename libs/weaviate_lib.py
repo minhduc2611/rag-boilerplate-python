@@ -26,6 +26,8 @@ COLLECTION_MESSAGES = "Messages"
 COLLECTION_SECTIONS = "Sections"
 COLLECTION_USERS = "Users"
 COLLECTION_FILES = "Files"
+COLLECTION_TOKEN_BLACKLIST = "TokenBlacklist"
+COLLECTION_AGENTS = "Agents"
 
 def initialize_schema() -> None:
     """Initialize the Weaviate schema if it doesn't exist."""
@@ -109,6 +111,39 @@ def initialize_schema() -> None:
             ]
         )
         print("🙌🏼 Collection Files created successfully")
+    exists = client.collections.exists(COLLECTION_TOKEN_BLACKLIST)
+    if not exists:
+        client.collections.create(
+            name=COLLECTION_TOKEN_BLACKLIST,
+            properties=[
+                wvc.config.Property(name="token", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="user_id", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="blacklisted_at", data_type=wvc.config.DataType.DATE),
+                wvc.config.Property(name="expires_at", data_type=wvc.config.DataType.DATE),
+            ]
+        )
+        print("🙌🏼 Collection TokenBlacklist created successfully")
+    exists = client.collections.exists(COLLECTION_AGENTS)
+    if not exists:
+        client.collections.create(
+            name=COLLECTION_AGENTS,
+            vectorizer_config=wvc.config.Configure.Vectorizer.text2vec_openai(
+                model=EMBEDDING_MODEL
+            ),
+            properties=[
+                wvc.config.Property(name="name", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="description", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="system_prompt", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="tools", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="model", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="temperature", data_type=wvc.config.DataType.NUMBER),
+                wvc.config.Property(name="created_at", data_type=wvc.config.DataType.DATE),
+                wvc.config.Property(name="updated_at", data_type=wvc.config.DataType.DATE),
+                wvc.config.Property(name="author", data_type=wvc.config.DataType.TEXT),
+                wvc.config.Property(name="status", data_type=wvc.config.DataType.TEXT),
+            ]
+        )
+        print("🙌🏼 Collection Agents created successfully")
     print("🙌🏼 Schema initialized successfully")
 
 def upload_documents(documents: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -305,3 +340,26 @@ def delete_collection_objects_many(
     # Delete a single object
     collection.data.delete_many(where=filters)
     return True
+
+def get_collection_count(
+    collection_name: str,
+    filters: Optional[_Filters] = None,
+) -> int:
+    """
+    Get the total count of objects in a collection with optional filters.
+    
+    Args:
+        collection_name: Name of the collection to count
+        filters: Optional filters to apply to the count
+        
+    Returns:
+        Total count of objects matching the filters
+    """
+    collection = client.collections.get(collection_name)
+    
+    # Use aggregate to get count
+    response = collection.aggregate.over_all(
+        filters=filters
+    )
+    
+    return response.total_count

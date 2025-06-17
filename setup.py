@@ -14,6 +14,8 @@ setup(
         "langchain-openai",
         "langchain-experimental",
         "pypdf",
+        "PyJWT",
+        "werkzeug",
     ],
     python_requires=">=3.8",
 ) 

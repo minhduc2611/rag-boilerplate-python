@@ -11,3 +11,5 @@ werkzeug
 PyJWT
 weaviate-client
 youtube-transcript-api
+langgraph
+langchain-core

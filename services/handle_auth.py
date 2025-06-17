@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 import jwt
 from werkzeug.security import generate_password_hash, check_password_hash
 from data_classes.common_classes import User, AuthRequest
-from libs.weaviate_lib import search_non_vector_collection, insert_to_collection
+from libs.weaviate_lib import search_non_vector_collection, insert_to_collection, COLLECTION_TOKEN_BLACKLIST
 from weaviate.collections.classes.filters import Filter
 import os
 
@@ -32,12 +32,69 @@ def create_jwt_token(user_id: str) -> str:
 def verify_jwt_token(token: str) -> Dict[str, Any]:
     """Verify a JWT token and return the payload"""
     try:
+        # First check if token is blacklisted
+        if is_token_blacklisted(token):
+            raise AuthError("Token has been revoked", 401)
+            
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
         raise AuthError("Token has expired", 401)
     except jwt.InvalidTokenError:
         raise AuthError("Invalid token", 401)
+
+def blacklist_token(token: str, user_id: str) -> bool:
+    """Add a token to the blacklist"""
+    try:
+        # Decode token to get expiration time
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        exp_timestamp = payload.get('exp')
+        
+        # Convert timestamp to datetime
+        exp_datetime = datetime.fromtimestamp(exp_timestamp, UTC)
+        
+        token_data = {
+            "token": token,
+            "user_id": user_id,
+            "blacklisted_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": exp_datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
+        }
+        
+        # Insert into blacklist collection
+        blacklist_id = insert_to_collection(
+            collection_name=COLLECTION_TOKEN_BLACKLIST,
+            properties=token_data
+        )
+        
+        return blacklist_id is not None
+    except Exception as e:
+        print(f"Error blacklisting token: {str(e)}")
+        return False
+
+def is_token_blacklisted(token: str) -> bool:
+    """Check if a token is blacklisted"""
+    try:
+        filters = Filter.by_property("token").equal(token)
+        blacklisted_tokens = search_non_vector_collection(
+            collection_name=COLLECTION_TOKEN_BLACKLIST,
+            filters=filters,
+            limit=1,
+            properties=["token", "blacklisted_at", "expires_at"]
+        )
+        
+        return len(blacklisted_tokens) > 0
+    except Exception as e:
+        print(f"Error checking token blacklist: {str(e)}")
+        return False
+
+def cleanup_expired_blacklisted_tokens():
+    """Clean up expired tokens from blacklist"""
+    try:
+        # This would require a more sophisticated cleanup mechanism
+        # For now, we'll rely on the token expiration check in verify_jwt_token
+        pass
+    except Exception as e:
+        print(f"Error cleaning up expired tokens: {str(e)}")
 
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Get a user by email"""

@@ -1,7 +1,7 @@
 from libs.pdf_lib import process_pdf, read_pdf_from_buffer, allowed_file
 from werkzeug.datastructures import FileStorage
 from typing import List, Tuple, Dict, Any, Optional
-from libs.weaviate_lib import upload_documents, search_non_vector_collection, insert_to_collection, COLLECTION_DOCUMENTS, update_collection_object, delete_collection_object, COLLECTION_FILES, client, delete_collection_objects_many
+from libs.weaviate_lib import upload_documents, search_non_vector_collection, insert_to_collection, COLLECTION_DOCUMENTS, update_collection_object, delete_collection_object, COLLECTION_FILES, client, delete_collection_objects_many, get_collection_count
 from weaviate.collections.classes.filters import Filter
 from weaviate.collections.classes.grpc import Sort
 from datetime import datetime
@@ -53,10 +53,11 @@ def upload_file(files: List[FileStorage], description: str, author: str) -> Tupl
     return results, 0
 
 # manage files
-def get_files(limit: int, offset: int) -> List[Dict[str, Any]]:
+def get_files(limit: int, offset: int) -> tuple[List[Dict[str, Any]], int]:
     """
-    Get all files, optionally filtered by author
+    Get all files with pagination and total count
     """
+    # Get files data
     files = search_non_vector_collection(
         collection_name=COLLECTION_FILES,
         limit=limit,    
@@ -64,8 +65,14 @@ def get_files(limit: int, offset: int) -> List[Dict[str, Any]]:
         properties=["name", "path", "author", "created_at", "updated_at"],
         sort=Sort.by_property("created_at", ascending=True)
     )
+    
+    # Get total count
+    total_count = get_collection_count(
+        collection_name=COLLECTION_FILES
+    )
+    
     files = [File(**file) for file in files]
-    return files
+    return files, total_count
 
 def create_file(file: File) -> str:
     """
@@ -213,17 +220,15 @@ def delete_file(file_id: str) -> bool:
 
 # manage documents 
 
-def get_documents(limit: int, offset: int) -> List[Dict[str, Any]]:
+def get_documents(limit: int, offset: int) -> tuple[List[Dict[str, Any]], int]:
     """
-    Get all documents, optionally filtered by author
+    Get all documents with pagination and total count
     
-    Args:
-        author: Optional author filter
-        
     Returns:
-        List of documents
+        Tuple of (documents, total_count)
     """
     try:
+        # Get documents data
         documents = search_non_vector_collection(
             collection_name=COLLECTION_DOCUMENTS,
             limit=limit,
@@ -232,7 +237,12 @@ def get_documents(limit: int, offset: int) -> List[Dict[str, Any]]:
             sort=Sort.by_property("created_at", ascending=True)
         )
         
-        return documents
+        # Get total count
+        total_count = get_collection_count(
+            collection_name=COLLECTION_DOCUMENTS
+        )
+        
+        return documents, total_count
     except Exception as e:
         raise Exception(f"Error getting documents: {str(e)}")
 
